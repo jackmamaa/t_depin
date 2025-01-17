@@ -1,0 +1,143 @@
+version: '3.8'
+
+services:
+  yagna:
+    build:
+      context: yagna
+      dockerfile: Dockerfile
+    container_name: yagna
+    restart: unless-stopped
+    environment:
+      - YAGNA_API_URL=http://0.0.0.0:${YAGNA_API_PORT}
+    volumes:
+      - ./yagna/yagna-init.sh:/app/yagna-init.sh
+      - ./yagna:/app/yagna/
+      - ./yagna/persist:/root/.local/share/yagna
+    entrypoint: ["/bin/sh", "/app/yagna-init.sh"]
+    ports:
+      - "${YAGNA_API_PORT}:${YAGNA_API_PORT}"
+    networks:
+      - t_depin
+
+  traefik:
+    image: traefik:v2.9
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--api.insecure=true"
+      - "--providers.file.directory=/etc/traefik/config"
+      - "--providers.file.watch=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./traefik/config:/etc/traefik/config:rw # Preview
+    networks:
+      - t_depin
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    volumes:
+      - ./mysql/persist:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d
+    networks:
+      - t_depin
+    ports:
+      - 3306:3306
+
+  backend:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+    container_name: backend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+
+      # api
+      - API_PORT=${API_PORT}
+      - API_TOKEN=${API_TOKEN}
+
+        # faucet
+      - HOLESKY_RPC_URL=${HOLESKY_RPC_URL}
+      - RELAYER_PRIVATE_KEY=${RELAYER_PRIVATE_KEY}
+      - HOLESKY_FAUCET_CONTRACT_ADDRESS=${HOLESKY_FAUCET_CONTRACT_ADDRESS}
+
+      # yagna
+      - YAGNA_API_URL=http://yagna:${YAGNA_API_PORT}
+
+      # mysql
+      - MYSQL_HOST=mysql
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+
+      # traefik
+      - TRAEFIK_CONFIG_PATH=${TRAEFIK_CONFIG_PATH}
+      - DOMAIN=${DOMAIN}
+
+      # logger
+      - LOG_CONSOLE=${LOG_CONSOLE}
+
+      # monitor
+      - INSTANCE_CHECK_INTERVAL=${INSTANCE_CHECK_INTERVAL}
+      - INSTANCE_DELETION_DELAY=${INSTANCE_DELETION_DELAY}
+      - INSTANCE_CREATION_TIMEOUT=${INSTANCE_CREATION_TIMEOUT}
+      - RENTAL_STOP_TIMEOUT=${RENTAL_STOP_TIMEOUT}
+    volumes:
+      - ./backend/src/contracts:/app/dist/contracts
+      - ./traefik/config:/etc/traefik/config:rw # Preview
+      - ./yagna:/app/yagna
+    ports:
+      - ${API_PORT}:${API_PORT}
+    depends_on:
+      - yagna
+      - mysql
+      - traefik
+    networks:
+      - t_depin
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+
+      # reown app
+      - VITE_REOWN_APP_NAME=${VITE_REOWN_APP_NAME}
+      - VITE_REOWN_PROJECT_ID=${VITE_REOWN_PROJECT_ID}
+
+      # deposit
+      - VITE_DEPOSIT_FEE_AMOUNT=${VITE_DEPOSIT_FEE_AMOUNT}
+
+      # backend
+      - VITE_API_URL=http://${DOMAIN}:${API_PORT}/api
+      - VITE_SSH_URL=ws://${DOMAIN}:${API_PORT}/ssh/
+      - VITE_API_TOKEN=${VITE_API_TOKEN}
+    volumes:
+      - ./yagna:/app/yagna
+    entrypoint: ["/bin/sh", "/app/frontend-entrypoint.sh"]
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    networks:
+      - t_depin
+
+networks:
+  t_depin:
+    driver: bridge
