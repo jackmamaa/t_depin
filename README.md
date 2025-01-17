@@ -51,7 +51,7 @@ sudo docker-compose build
 sudo docker-compose up -d
 ```
 
-After the service starts, you can access:
+Wait for 1~3 minutes, then you can access:
 
 - Frontend interface: `http://<your-domain>:5173`
 - Backend API: `http://<your-domain>:3001/api`
